@@ -1,0 +1,780 @@
+"""
+====================
+讀取原始資料型態(opendata)
+====================
+"""
+import json
+
+fn=r'C:\Users\chuan\OneDrive\桌面\工作\專題\Environment.json'
+
+with open(fn,encoding='utf-8-sig') as Fn:
+    Data=json.load(Fn)
+    print(Data)
+    
+print(Data['result']['records'][0]['companyname'])
+
+L=[]
+for item in Data['result']['records']:
+    a=list([item['App_year'],item['companyname'],item['city'],item['town'],item['Sicname1'],item['CO2'],item['CH4'],
+   item['N2O'],item['HFCs'],item['PFCs'],item['SF6'],item['nf3'],
+   item['Tot2'],item['tot'],item['cause']])
+    L.append(a)
+#%%
+"""
+====================
+將json檔資料存進SQlite資料庫
+====================
+"""
+import json
+data=r'C:\Users\chuan\OneDrive\桌面\工作\專題\Environment.json'
+with open (data,encoding='utf-8-sig') as Fn:
+    Data=json.load(Fn)
+    print(Data)
+    print(type(Data))
+
+#存進SQlite資料庫
+import sqlite3
+conn=sqlite3.connect('GreenHouse.sqlite')
+conn.execute("""CREATE TABLE greenhouse
+(Year TEXT,
+Companyname TEXT,
+City TEXT,
+Town TEXT,
+Industry TEXT,
+CO2 INT,
+CH4 INT,
+N2O INT,
+HFCs INT,
+PFCs INT,
+SF6 INT,
+nf3 INT,
+Tot2 INT,
+tot INT,
+cause TEXT)""")
+
+#
+
+for item in Data['result']['records']:
+    sql="INSERT INTO greenhouse(Year,Companyname,City,Town,Industry,CO2,CH4,N2O,HFCs,PFCs,SF6,nf3,Tot2,tot,cause) VALUES('{0}','{1}','{2}','{3}','{4}','{5}','{6}','{7}','{8}','{9}','{10}','{11}','{12}','{13}','{14}')"
+    sql=sql.format(item['App_year'],item['companyname'],item['city'],item['town'],item['Sicname1'],item['CO2'],item['CH4'],
+   item['N2O'],item['HFCs'],item['PFCs'],item['SF6'],item['nf3'],
+   item['Tot2'],item['tot'],item['cause'])
+    cursor=conn.execute(sql)
+    print(cursor.rowcount)
+    conn.commit()  
+conn.close()
+
+#%%
+"""
+====================
+從資料庫提取資料並整理
+====================
+"""
+import sqlite3
+
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("SELECT * FROM greenhouse where Year=108")
+
+rows=cur.fetchall()
+print(rows)
+
+Tot=[]
+for row in rows:
+    #print(row[0],row[1],row[2],row[3],row[4])
+    #print(row[4])
+    Tot.append([row[0],row[1],row[2],row[3],row[4],row[13]])
+#查詢資料庫資料後，將所需欄位轉為串列形式，以做資料處理
+
+"""
+=================================
+(一)計算最新年度各產業排放比例&實際數值
+=================================
+"""
+#使用pandas計算108年分組(產業別)總和 (Tot)
+import pandas as pd
+
+Data_108=pd.DataFrame(Tot,columns=['year','company','city','area','industry','ToT'])
+print(Data_108)
+
+Sum_108=Data_108.groupby("industry").sum() #用產業做分組來加總排放量
+
+#把108年(原產業別)分組dataframe資料(Tot)存進資料庫
+Sum_108.to_sql('108_Tot',conn,if_exists='replace',index=True)
+
+"""
+======================================
+將各年度排放量都依以上做法匯入存入資料庫後,
+使用SQL語法重新整理各年度產業標籤
+======================================
+"""
+#依108年重新分組的資料表進行Sum，做成dataframe
+import sqlite3
+
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("SELECT * FROM '108_Tot'")
+
+rows=cur.fetchall()
+print(rows)
+
+Tot=[]
+for row in rows:
+    Tot.append([row[0],row[1],row[2],row[3]])
+
+import pandas as pd
+
+Data_108=pd.DataFrame(Tot,columns=['Original','Tot','Group','Tag'])
+print(Data_108)
+
+Sum_108=Data_108.groupby("Tag").sum()
+#%%
+"""
+====================
+視覺化1-1:圓餅圖
+====================
+"""
+#製作視覺化圖表(圓餅圖，依產業別，前五名+其他)
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+
+plt.rcParams['font.family']='Microsoft YaHei'
+plt.rcParams['font.size']=12
+
+tags=["電力供應業","化學材料製造業","金屬製造業","電子零組件製造業","非金屬礦物製品製造業","其他"]
+"""
+=================================================
+這裡的其他包含
+"紙漿及紙製品製造","食品製造業","紡織業","石油製造業",
+("機械設備製造業"、"研究發展")等"
+=================================================
+"""
+#1.算各產業總排放量加總&產生比例(pie)
+other=[]
+for i in range(len(Sum_108)):
+    if i!=0 and i!=1 and i!=3 and i!=5 and i!=6:
+        a=Sum_108.iloc[i,0]
+        other.append(a)
+other=sum(other)
+Sum_108_=[Sum_108.iloc[3,0],Sum_108.iloc[0,0],Sum_108.iloc[1,0],
+          Sum_108.iloc[5,0],Sum_108.iloc[6,0],other]
+
+colors=['#0b967d','#acd5c9','#f0cd84','#dc8350', '#73a2c6','gray']
+explode=[0,0,0,0,0.1,0]
+
+plt.pie(Sum_108_,labels=tags,colors=colors,
+        shadow=True,explode=explode,autopct="%1.1f%%",
+        textprops={"fontsize":16})
+
+plt.axis("equal")
+
+plt.show()
+
+#%%
+"""
+====================
+視覺化1-2:橫長條圖
+====================
+"""
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+import matplotlib.font_manager as fm
+
+plt.rcParams['font.family']='Microsoft YaHei'
+plt.rcParams['font.size']=12
+
+tags=["其他","石油製造","紙製品製造",
+      "非金屬礦物製品","電子零組件",
+      "金屬製造","化學材料","電力供應"]
+other=[int(Sum_108.iloc[4,0])+int(Sum_108.iloc[7,0])+int(Sum_108.iloc[8,0])]
+other=sum(other)
+#這裡的其他包含(機械設備、研究發展)、紡織、食品製造
+Tot_108_Num=[other,int(Sum_108.iloc[9,0]),int(Sum_108.iloc[2,0]),int(Sum_108.iloc[6,0]),
+             int(Sum_108.iloc[5,0]),int(Sum_108.iloc[1,0]),int(Sum_108.iloc[0,0]),
+             int(Sum_108.iloc[3,0])]
+x=np.arange(len(Sum_108)-2) 
+plt.barh(x,Tot_108_Num, color=['#0094b0', '#77adad', '#aec6af', '#dae1bb', '#9ab5d1', '#6999ba', '#3b7e98', '#006372'])
+plt.yticks(x,tags,fontsize=14)
+
+plt.title('108年各產業溫室氣體年排放量',fontdict={"size":16})
+plt.xlabel("CO2e(億公噸)",fontsize=14)
+plt.show()
+#加強:想顯示數值!
+#%%
+"""
+=====================================================
+(二)分析哪個城市有密集的次數，依照產業排放量估計原因
+透過SQL語法算出「108年列表」中分布城市次數較多的前五名
+並依序計算各產業排放量
+=====================================================
+"""
+import sqlite3
+
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("SELECT * FROM greenhouse where Year=108 and city LIKE '台中%'")
+
+rows=cur.fetchall()
+
+City=[]
+for row in rows:
+    #print(row[0],row[1],row[2],row[3],row[4])
+    #print(row[4])
+    City.append([row[0],row[1],row[2],row[3],row[4],row[13]])
+
+#將抓出的108城市資料依序存入資料庫方便之後取用
+import pandas as pd
+Data=pd.DataFrame(City,columns=['year','company','city','area','industry','ToT'])
+Data.to_sql('Citys',conn,if_exists='append',index=False)
+
+conn.close()
+
+#計算分布計數前五名城市各產業排放量，並以堆疊長條圖表示
+import sqlite3
+import pandas as pd
+#高雄
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("SELECT * FROM Citys where city LIKE '高雄%'")
+
+rows=cur.fetchall()
+
+L=[]
+for row in rows:
+   L.append([row[0],row[2],row[5],row[6]]) 
+
+Data_K=pd.DataFrame(L,columns=['year','city','Tot','Grouptag'])
+Data_K=Data_K.groupby('Grouptag').sum()
+
+conn.close()
+#桃園
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("SELECT * FROM Citys where city LIKE '桃園%'")
+
+rows=cur.fetchall()
+
+L=[]
+for row in rows:
+   L.append([row[0],row[2],row[5],row[6]]) 
+
+Data_Tao=pd.DataFrame(L,columns=['year','city','Tot','Grouptag'])
+Data_Tao=Data_Tao.groupby('Grouptag').sum()
+
+conn.close()
+
+#新竹
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("SELECT * FROM Citys where city LIKE '新竹%'")
+
+rows=cur.fetchall()
+
+L=[]
+for row in rows:
+   L.append([row[0],row[2],row[5],row[6]]) 
+
+Data_H=pd.DataFrame(L,columns=['year','city','Tot','Grouptag'])
+Data_H=Data_H.groupby('Grouptag').sum()
+
+conn.close()
+
+#台南
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("SELECT * FROM Citys where city LIKE '台南%'")
+
+rows=cur.fetchall()
+
+L=[]
+for row in rows:
+   L.append([row[0],row[2],row[5],row[6]]) 
+
+Data_Tainan=pd.DataFrame(L,columns=['year','city','Tot','Grouptag'])
+Data_Tainan=Data_Tainan.groupby('Grouptag').sum()
+
+conn.close()
+
+#台中
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("SELECT * FROM Citys where city LIKE '台中%'")
+
+rows=cur.fetchall()
+
+L=[]
+for row in rows:
+   L.append([row[0],row[2],row[5],row[6]]) 
+
+Data_TaiC=pd.DataFrame(L,columns=['year','city','Tot','Grouptag'])
+Data_TaiC=Data_TaiC.groupby('Grouptag').sum()
+
+conn.close()
+"""
+====================================
+視覺化2-1:堆疊長條圖，觀察地區與產業關聯
+====================================
+"""
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+
+plt.rcParams['font.family']='Microsoft YaHei'
+plt.rcParams['font.size']=12
+
+L1=[]
+for i in range(len(Data_K)):
+    L1.append(int(Data_K.iloc[i,0]))
+
+L2=[]
+for i in range(len(Data_Tao)):
+    L2.append(int(Data_Tao.iloc[i,0]))
+
+L3=[]
+for i in range(len(Data_H)):
+    L3.append(int(Data_H.iloc[i,0]))
+    
+L4=[]
+for i in range(len(Data_Tainan)):
+    L4.append(int(Data_Tainan.iloc[i,0]))
+    
+L5=[]
+for i in range(len(Data_TaiC)):
+    L5.append(int(Data_TaiC.iloc[i,0]))
+
+citys=["高雄","桃園","新竹","台南","台中"]
+colors=['navy', 'cornflowerblue', 'lightsteelblue', 'seagreen', 
+        'lightseagreen', 'yellowgreen', 'goldenrod', 'burlywood', 
+        'wheat', 'orange']
+
+data={
+    "化學材料製造業":[L1[0],L2[0],L3[0],L4[0],L5[0]],
+    "金屬製造業":[L1[1],L2[1],0,L4[1],L5[1]],
+    "紙漿及紙製品製造業":[L1[2],L2[2],L3[1],0,L5[2]],
+    "電力供應業":[L1[3],L2[3],L3[2],L4[2],L5[3]],
+    "其他":[0,0,L3[3],0,0],
+    "電子零組件製造業":[L1[4],L2[4],L3[4],L4[3],L5[4]],
+    "非金屬礦物製品製造業":[L1[5],L2[5],L3[5],0,L5[5]],
+    "食品製造業":[L1[6],L2[6],0,L4[4],L5[6]],
+    "紡織業":[0,L2[7],0,L4[5],0],
+    "石油及煤製品供應業":[L1[7],L2[8],0,0,0]
+}
+
+df=pd.DataFrame(data,index=citys)
+
+df.plot(kind="barh",stacked=True,figsize=(10,8),color=colors,
+        fontsize=16)
+plt.xlabel('CO2e(千萬公噸)',fontsize=14)
+
+plt.show()
+#加強:想在堆疊圖上顯示比例!
+#%%
+"""
+=============================================
+(三)依最新年度排放前三名產業，觀察7年以來是否有減少排放
+註:因99~101年資料不全，故排除
+=============================================
+"""
+import sqlite3
+import pandas as pd
+#102年
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("""SELECT * FROM '102_Tot' where Groupname='電力供應業'
+                 or Groupname='化學材料製造業'or Groupname='金屬製造業'""")
+rows=cur.fetchall()
+print(rows)
+
+Tot_102=[]
+for row in rows:
+    Tot_102.append([row[1],row[2],row[3]])
+
+Tot_102=pd.DataFrame(Tot_102,columns=['industry','Tot','Grouptag'])
+Data_102=Tot_102.groupby('Grouptag').sum()
+#103年
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("""SELECT * FROM '103_Tot' where Groupname='電力供應業'
+                 or Groupname='化學材料製造業'or Groupname='金屬製造業'""")
+rows=cur.fetchall()
+
+Tot_103=[]
+for row in rows:
+    Tot_103.append([row[1],row[2],row[3]])
+
+Tot_103=pd.DataFrame(Tot_103,columns=['industry','Tot','Grouptag'])
+Data_103=Tot_103.groupby('Grouptag').sum()
+#104年
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("""SELECT * FROM '104_Tot' where Groupname='電力供應業'
+                 or Groupname='化學材料製造業'or Groupname='金屬製造業'""")
+rows=cur.fetchall()
+
+Tot_104=[]
+for row in rows:
+    Tot_104.append([row[1],row[2],row[3]])
+
+Tot_104=pd.DataFrame(Tot_104,columns=['industry','Tot','Grouptag'])
+
+Data_104=Tot_104.groupby('Grouptag').sum()
+#105年
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("""SELECT * FROM '105_Tot' where Groupname='電力供應業'
+                 or Groupname='化學材料製造業'or Groupname='金屬製造業'""")
+rows=cur.fetchall()
+#
+Tot_105=[]
+for row in rows:
+    Tot_105.append([row[1],row[2],row[3]])
+
+Tot_105=pd.DataFrame(Tot_105,columns=['industry','Tot','Grouptag'])
+
+Data_105=Tot_105.groupby('Grouptag').sum()
+#106年
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("""SELECT * FROM '106_Tot' where Groupname='電力供應業'
+                 or Groupname='化學材料製造業'or Groupname='金屬製造業'""")
+rows=cur.fetchall()
+
+Tot_106=[]
+for row in rows:
+    Tot_106.append([row[1],row[2],row[3]])
+
+Tot_106=pd.DataFrame(Tot_106,columns=['industry','Tot','Grouptag'])
+
+Data_106=Tot_106.groupby('Grouptag').sum()
+
+#107年
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("""SELECT * FROM '107_Tot' where Groupname='電力供應業'
+                 or Groupname='化學材料製造業'or Groupname='金屬製造業'""")
+rows=cur.fetchall()
+
+Tot_107=[]
+for row in rows:
+    Tot_107.append([row[1],row[2],row[3]])
+
+Tot_107=pd.DataFrame(Tot_107,columns=['industry','Tot','Grouptag'])
+
+Data_107=Tot_107.groupby('Grouptag').sum()
+
+#108年
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("""SELECT * FROM '108_Tot' where Groupname='電力供應業'
+                 or Groupname='化學材料製造業'or Groupname='金屬製造業'""")
+rows=cur.fetchall()
+
+Tot_108=[]
+for row in rows:
+    Tot_108.append([row[1],row[2],row[3]])
+
+Tot_108=pd.DataFrame(Tot_108,columns=['industry','Tot','Grouptag'])
+
+Data_108=Tot_108.groupby('Grouptag').sum()
+
+#把七年整理好的Data存入資料庫
+Data_103.to_sql('Data',conn,if_exists='append',index=True)
+
+"""
+===============
+視覺化3-1:折線圖
+===============
+"""
+import sqlite3
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+import numpy as np
+
+plt.rcParams['font.family']='Microsoft YaHei'
+plt.rcParams['font.size']=12
+
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("""SELECT * FROM 'Data' where Year='108'
+                 or Year='107'or Year='106' or Year='105'
+                 or Year='104'or Year='103'or Year='102'""")
+rows=cur.fetchall()
+
+L=[]
+for row in rows:
+    L.append([row[0],row[1],row[2]])
+#各年總量(SUM)在SQLlite內使用SQL語法求得(2013總量採環保署數值)
+SUM=[267623000,263643205,266234335,271100526,282166928,279780078,265969711]
+electricity=[L[20][1],L[17][1],L[14][1],L[11][1],L[8][1],L[5][1],L[2][1]]
+chemistry=[L[18][1],L[15][1],L[12][1],L[9][1],L[6][1],L[3][1],L[0][1]]
+metal=[L[19][1],L[16][1],L[13][1],L[10][1],L[7][1],L[4][1],L[1][1]]
+
+colors=[]
+for i in range(7):
+    colors.append("lightgray")
+
+years=['2013','2014','2015','2016','2017','2018','2019']
+
+plt.plot(years,electricity,c="#008484",marker="s",label="電力供應業"),
+plt.plot(years,chemistry,c="#69b4d9",marker="s",label="化學材料製造業")
+plt.plot(years,metal,c="#e77da0",marker="s",label="金屬製造業")
+plt.bar(years,SUM,color=colors,label="年排放總量")
+
+plt.xlabel("Year",fontsize=14)
+plt.ylabel("MtCo2e(億公噸)",fontsize=14)
+#用zip設置數字標籤(text)
+for a,b in zip(years,SUM):
+    if a == '2017' or a=='2019':
+        plt.text(a, b+0.05, '%.0f' % b, ha='center', va= 'bottom',fontsize=10)
+
+plt.legend(loc='best',bbox_to_anchor=(1.05,1.0),fontsize=13)
+
+plt.show()
+"""
+===================================
+#針對圖片現象，找出2013和2014化學排放，
+分別佔總排放29%、17%
+(與2014年產值下跌11%大約符合)
+==================================
+"""
+
+"""
+===========================================
+(四)計算99-108每年排放總量
+並與2005年基準排放量(法規規定)做比較
+註:99~102年採用環保署公布數值，因此份檔案不完全
+===========================================
+"""
+import sqlite3
+#108年
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("SELECT * FROM '108_Tot'")
+
+rows=cur.fetchall()
+
+Tot1=[]
+for row in rows:
+    Tot1.append([row[1]])
+
+Sum_2019=0
+for i in range(len(Tot1)):
+    Sum_2019+=Tot1[i][0]
+#107年
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("SELECT * FROM '107_Tot'")
+
+rows=cur.fetchall()
+
+Tot2=[]
+for row in rows:
+    Tot2.append([row[1]])
+
+Sum_2018=0
+for i in range(len(Tot2)):
+    Sum_2018+=Tot2[i][0]
+#106年
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("SELECT * FROM '106_Tot'")
+
+rows=cur.fetchall()
+
+Tot3=[]
+for row in rows:
+    Tot3.append([row[1]])
+
+Sum_2017=0
+for i in range(len(Tot3)):
+    Sum_2017+=Tot3[i][0]
+#105年
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("SELECT * FROM '105_Tot'")
+
+rows=cur.fetchall()
+
+Tot4=[]
+for row in rows:
+    Tot4.append([row[1]])
+
+Sum_2016=0
+for i in range(len(Tot4)):
+    Sum_2016+=Tot4[i][0]
+#104年
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("SELECT * FROM '104_Tot'")
+
+rows=cur.fetchall()
+
+Tot5=[]
+for row in rows:
+    Tot5.append([row[1]])
+
+Sum_2015=0
+for i in range(len(Tot5)):
+    Sum_2015+=Tot5[i][0]
+#103年
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("SELECT * FROM '103_Tot'")
+
+rows=cur.fetchall()
+
+Tot6=[]
+for row in rows:
+    Tot6.append([row[1]])
+
+Sum_2014=0
+for i in range(len(Tot6)):
+    Sum_2014+=Tot6[i][0]
+
+#102年
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("SELECT * FROM '102_Tot'")
+
+rows=cur.fetchall()
+
+Tot7=[]
+for row in rows:
+    Tot7.append([row[1]])
+
+Sum_2013=0
+for i in range(len(Tot7)):
+    Sum_2013+=Tot7[i][0]
+"""
+====================================
+視覺化4-1:折線圖，觀察十年來排放減少趨勢
+====================================
+"""
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+
+plt.rcParams['font.family']='Microsoft YaHei'
+plt.rcParams['font.size']=12
+
+years=['2010','2011','2012','2013','2014','2015','2016','2017','2018','2019']
+Sums=[265549000,271137000,266290000,267623000,Sum_2014,Sum_2015,Sum_2016,Sum_2017,Sum_2018,Sum_2019]
+line=[267790000,267790000,267790000,267790000,267790000,
+      267790000,267790000,267790000,267790000,267790000]
+line2=[133895000,133895000,133895000,133895000,133895000,
+       133895000,133895000,133895000,133895000,133895000]
+
+plt.plot(years,Sums,c="#3c8cb0",ls="-",marker="s",label="溫室氣體年排放量"),
+plt.plot(years,line,c="gray",ls="--",label="2005年基準排放量")
+plt.plot(years,line2,c="#874263",ls="--",label="預計減量目標")
+
+plt.yticks([0,60000000,120000000,180000000,240000000,300000000])
+
+plt.xlabel("Year")
+plt.ylabel("MtCo2e(億公噸)")
+
+plt.legend(loc='best')
+
+plt.show()
+
+"""
+===========================================
+(五)計算最新年度各污染物排放占比
+(註:資料皆為同單位「二氧化碳當量」)
+===========================================
+"""
+import sqlite3
+conn=sqlite3.connect(r'C:\Users\chuan\GreenHouse.sqlite')
+cur=conn.execute("SELECT * FROM greenhouse where Year=108")
+
+rows=cur.fetchall()
+import numpy as np
+CO2=[]
+CH4=[]
+N2O=[]
+HFCs=[]
+PFCs=[]
+SF6=[]
+nf3=[]
+Tot2=[]
+for row in rows:
+    CO2.append(row[5])
+    CH4.append(row[6])
+    N2O.append(row[7])
+    HFCs.append(row[8])
+    PFCs.append(row[9])
+    SF6.append(row[10])
+    nf3.append(row[11])
+    Tot2.append(row[12])
+
+CO2=np.array(CO2).sum()
+CH4=np.array(CH4).sum()
+N2O=np.array(N2O).sum()
+HFCs=np.array(HFCs).sum()
+PFCs=np.array(PFCs).sum()
+SF6=np.array(SF6).sum()
+nf3=np.array(nf3).sum()
+Tot2=np.array(Tot2).sum()
+
+others=CH4+N2O+HFCs+PFCs+SF6+nf3
+"""
+========================================
+視覺化5-1:多圓餅圖
+註:由於CO2比例太大，查資料找到做多圓餅圖方法
+========================================
+"""
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+from matplotlib.patches import ConnectionPatch 
+
+plt.rcParams['font.family']='Microsoft YaHei'
+plt.rcParams['font.size']=12
+
+fig=plt.figure(figsize=(12,6))
+
+ax1=plt.subplot(1,2,1)
+ax2=plt.subplot(1,2,2)
+
+#調整字體及大小
+font_path=r'C:\Windows\Fonts\msjh.ttf'
+font_prop=fm.FontProperties(fname=font_path)
+font_prop.set_style('normal')
+font_prop.set_size('16')
+
+#大圓餅圖
+data1={"category":['CO2','間接排放量','其他'],
+       "num":[CO2,Tot2,others]}
+
+colors=['#7fa9dd', '#a9d9de', '#d58e96']
+explode=[0,0.1,0]
+
+ax1.pie(data1["num"],labels=data1["category"],colors=colors,
+        autopct="%1.1f%%",textprops={"fontsize":16})
+
+#小圓餅圖
+data2={"category":['CH4','N2O','HFCs','PFCs','SF6','nf3'],
+     "num":[CH4,N2O,HFCs,PFCs,SF6,nf3]}
+ax2.pie(data2["num"],labels=data2["category"],
+        colors=['#5e77dc', '#7fa9dd', '#a9d9de', '#d58e96', '#b95165', '#93003a'],
+        autopct="%1.1f%%",textprops={"fontsize":14},radius=0.5) #使用radius讓半徑變小
+
+#畫出兩個餅圖的間連線
+theta1=ax1.patches[-1].theta1
+theta2=ax1.patches[-1].theta2
+center=ax1.patches[-1].center
+r=ax1.patches[-1].r
+
+width=0.2
+
+#畫出上邊緣的連線
+x = r*np.cos(np.pi/180*theta2)+center[0]
+y = np.sin(np.pi/180*theta2)+center[1]
+con1 = ConnectionPatch(xyA=(0, 0.5),
+            xyB=(x,y),
+            coordsA=ax2.transData,
+            coordsB=ax1.transData,
+            axesA=ax2,axesB=ax1)
+print(-width/2, 0.5)
+print(x,y)
+
+#畫出下邊緣的連線
+x = r*np.cos(np.pi/180*theta1) + center[0]
+y = np.sin(np.pi/180*theta1) + center[1]
+con2 = ConnectionPatch(xyA=(-0.1, -0.49),
+            xyB=(x,y),
+            coordsA='data',
+            coordsB='data',
+            axesA=ax2,axesB=ax1)
+
+# 添加連接線
+for con in [con1, con2]:
+  con.set_color('gray')
+  ax2.add_artist(con)
+  con.set_linewidth(1)
+
+plt.legend(loc="best")
+
+plt.show()
+
+"""
+===================
+The END
+===================
+"""
